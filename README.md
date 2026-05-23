@@ -15,7 +15,7 @@ HELIX is an autonomous day trading system that:
 - Validates all decisions through a risk engine with 6 approval rules
 - Logs all decisions and risk reviews for audit trail
 - Provides a modern Streamlit dashboard for monitoring
-- **Never executes trades** without explicit human approval
+- Currently requires human approval before execution while autonomous safeguards and risk controls are being validated
 
 ### Key Features
 - **Local Risk Engine**: 6 validation rules before trade approval
@@ -26,6 +26,7 @@ HELIX is an autonomous day trading system that:
 - **Real Market Data**: Live integration with Alpaca
 - **Modern Dashboard**: Dark-themed command center interface
 - **Modular Architecture**: Clean separation of concerns
+- **Deterministic Controls**: Hard rules override AI decisions
 
 ---
 
@@ -46,7 +47,7 @@ Real Market Data (OHLCV)
     ↓
 JSON Decision: {symbol, decision, confidence, reason, risk_notes}
     ↓
-[risk_engine.py] → Validation against 6 risk rules
+[risk_engine.py] → Validation against deterministic rules
     ↓
 ├─ APPROVED → [logger.py] → decisions.jsonl
 └─ REJECTED → [logger.py] → risk_reviews.jsonl
@@ -66,6 +67,7 @@ JSON Decision: {symbol, decision, confidence, reason, risk_notes}
 ### ✅ Phase 1.5: JSON Parsing & Validation
 - Robust JSON extraction from Llama output
 - Field validation and error handling
+- Deterministic temperature configuration (temperature=0)
 
 ### ✅ Phase 1.6: Decision Logging
 - JSONL-based decision logs
@@ -74,6 +76,7 @@ JSON Decision: {symbol, decision, confidence, reason, risk_notes}
 ### ✅ Phase 2: Controlled Loop
 - Main trading loop with error handling
 - Health checks for dependencies
+- Safe Ctrl+C shutdown behavior
 
 ### ✅ Phase 3: Alpaca Real Market Data
 - Integration with Alpaca API
@@ -85,6 +88,11 @@ JSON Decision: {symbol, decision, confidence, reason, risk_notes}
 - EMA-9 (9-period Exponential Moving Average)
 - EMA-20 (20-period Exponential Moving Average)
 - Trend classification (BULLISH, BEARISH, NEUTRAL)
+
+### ✅ Phase 3.6: Dashboard
+- Streamlit monitoring dashboard
+- Startup health checks
+- System monitoring interface
 
 ### ✅ Phase 3.7: Documentation
 - Trading rules (docs/trading_rules.md)
@@ -102,7 +110,7 @@ JSON Decision: {symbol, decision, confidence, reason, risk_notes}
 6. **Field Validation**: Required fields must exist
 
 **Output:**
-```json
+```
 {
   "approved": true,
   "reason": "✅ Passed all risk checks",
@@ -149,7 +157,8 @@ APCA_BASE_URL=https://paper-api.alpaca.markets
 ```bash
 # In separate terminal
 ollama serve
-ollama pull llama2  # if not already installed
+ollama pull llama3.1:8b  # if not already installed
+ollama list
 ```
 
 ### 4. Run the System
@@ -234,12 +243,19 @@ Both Ollama and Alpaca must pass startup checks:
 
 ## 📊 Dashboard
 
-Modern Streamlit interface showing:
+Current Dashboard Modules:
 - **System Health**: Ollama, Alpaca, decision count
 - **Latest Decision**: Symbol, decision, confidence, timestamp
 - **Analysis Details**: Reasoning and risk assessment
 - **Decision History**: Last 20 decisions in table format
 - **Dark Theme**: Cyan neon styling, professional command center design
+
+Planned Dashboard Modules:
+- **Risk Engine Status**: 
+- **Trade Cooldowns**: 
+- **Market Session Status**: 
+- **Stale Data Alerts**: 
+- **Execution Queue Monitoring**: 
 
 Run it:
 ```bash
@@ -253,7 +269,7 @@ Accessible at: `http://localhost:8501`
 ## 📋 Logging
 
 ### `logs/decisions.jsonl`
-Approved trading decisions ready for execution in Phase 5:
+Approved decisions ready for future execution pipeline:
 ```json
 {
   "timestamp": "2026-05-23T04:37:24.750431Z",
@@ -302,29 +318,46 @@ Tests all 6 risk validation rules:
 
 ## 🛣️ Roadmap
 
-### Phase 5: Paper Trading Execution
-- Query live Alpaca account
-- Submit approved BUY/SELL orders
-- Track position P&L
-- Log execution history
+### Phase 4.1 : Risk Hardening
+- Market-hours validation
+- Stale-data detection
+- Cooldown timers
+- Duplicate trade prevention
+- Expanded dashboard risk visibility
+
+
+### Phase 4.5: Persistent State Layer
+- state_manager.py
+- Trade cooldown persistence
+- Position tracking
+- Session state tracking
+- Daily trade counters
+
+### Phase 5: Autonomous Paper Trading
+- Alpaca paper execution layer
+- Submit approved paper-trading orders
+- Track fills and execution lifecycle
+- Position and P&L tracking
+- Transaction logging
 
 ### Phase 6: Advanced Risk Management
-- Position sizing calculations
+- Position sizing 
 - Stop-loss automation
 - Profit-taking levels
-- Portfolio rebalancing
+- Portfolio exposure limits
 
-### Phase 7: Live Trading (With Approval)
-- Approval workflow before live orders
-- Real money risk controls
+### Phase 7: Autonomous Live Trading
+- Controlled live execution
+- Real-money safeguards
 - Daily loss limits
 - Position limits per symbol
+- Advanced execution governance
 
 ### Phase 8: Advanced Features
 - Multi-symbol concurrent trading
 - Backtesting engine
 - Strategy optimization
-- Web API for external monitoring
+- external monitoring API
 
 ---
 
@@ -396,17 +429,11 @@ git status
 git add app/ docs/ logs/
 
 # Commit with phase info
-git commit -m "Phase 4: Risk Engine - Description of changes"
+git commit -m "Phase X: Description"
 
 # Push to GitHub
 git push origin main
 ```
-
----
-
-## 📄 License
-
-Private repository - Autonomous Trading System
 
 ---
 
@@ -437,14 +464,15 @@ For issues:
 ## 🎯 Key Metrics
 
 **Phase 4 Status:**
-- ✅ 6 Risk validation rules implemented
-- ✅ 100% test coverage (all rules tested)
-- ✅ Complete audit trail
-- ✅ Zero manual trades
-- ⏳ Phase 5: Paper trading execution
+- ✅ 6 deterministic validation rules
+- ✅ Full audit trail
+- ✅ Real market data integration
+- ✅ Local AI decision engine
+- ✅ Streamlit dashboard
+- ⏳ Autonomous paper execution pending
 
 **Next Milestone:**
-Execute approved decisions automatically through Alpaca paper trading API.
+Phase 5 — Controlled autonomous paper trading through Alpaca execution layer.
 
 ---
 
