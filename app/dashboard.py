@@ -1,15 +1,17 @@
 import streamlit as st
-import json
-import os
 import sys
-from datetime import datetime
 from pathlib import Path
-import pandas as pd
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.health_check import check_ollama, check_alpaca_config
+from app.dashboard_utils import (
+    get_decision_status_metrics,
+    format_risk_reviews_for_table,
+    load_decisions,
+    load_risk_reviews
+)
 
 
 # Custom CSS for modern dark theme
@@ -50,24 +52,6 @@ CUSTOM_CSS = """
         box-shadow: 0 0 30px rgba(0, 217, 255, 0.2);
     }
     
-    /* Status indicators */
-    .status-online {
-        color: var(--success);
-        text-shadow: 0 0 10px var(--success);
-        font-weight: bold;
-    }
-    
-    .status-offline {
-        color: var(--danger);
-        text-shadow: 0 0 10px var(--danger);
-        font-weight: bold;
-    }
-    
-    .decision-online {
-        color: var(--success);
-        text-shadow: 0 0 15px var(--success);
-    }
-    
     /* Card styling */
     .command-card {
         background-color: var(--bg-card);
@@ -76,6 +60,18 @@ CUSTOM_CSS = """
         padding: 24px;
         margin: 12px 0;
         box-shadow: 0 8px 32px rgba(0, 217, 255, 0.1);
+    }
+    
+    .kill-switch-on {
+        background: linear-gradient(135deg, rgba(255, 0, 110, 0.3), rgba(255, 0, 110, 0.1));
+        border: 2px solid #FF006E !important;
+        box-shadow: 0 0 30px rgba(255, 0, 110, 0.3) !important;
+    }
+    
+    .kill-switch-off {
+        background-color: var(--bg-card);
+        border: 1px solid rgba(0, 255, 65, 0.3);
+        box-shadow: 0 8px 32px rgba(0, 255, 65, 0.1);
     }
     
     /* Header styling */
@@ -101,22 +97,6 @@ CUSTOM_CSS = """
         background: linear-gradient(90deg, transparent, rgba(0, 217, 255, 0.3), transparent);
     }
     
-    /* Decision status colors */
-    .decision-buy {
-        color: var(--success);
-        font-weight: bold;
-    }
-    
-    .decision-sell {
-        color: var(--danger);
-        font-weight: bold;
-    }
-    
-    .decision-hold {
-        color: var(--warning);
-        font-weight: bold;
-    }
-    
     /* Dataframe styling */
     [data-testid="stDataFrame"] {
         background-color: var(--bg-card) !important;
@@ -133,70 +113,8 @@ st.set_page_config(
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
-def load_decisions():
-    """Load all decisions from JSONL file."""
-    decisions_file = Path(__file__).parent.parent / "logs" / "decisions.jsonl"
-    
-    if not decisions_file.exists():
-        return []
-    
-    decisions = []
-    try:
-        with open(decisions_file, "r") as f:
-            for line in f:
-                if line.strip():
-                    decisions.append(json.loads(line))
-    except Exception as e:
-        st.error(f"Error reading decisions log: {e}")
-        return []
-    
-    return decisions
-
-
-def get_latest_decision(decisions):
-    """Get the most recent decision."""
-    if not decisions:
-        return None
-    return decisions[-1]
-
-
-def format_decision_data(decisions):
-    """Format decisions for table display."""
-    if not decisions:
-        return pd.DataFrame()
-    
-    data = []
-    for entry in decisions[-20:]:  # Show last 20 decisions
-        decision = entry.get("decision", {})
-        data.append({
-            "Timestamp": entry.get("timestamp", "N/A"),
-            "Symbol": decision.get("symbol", "N/A"),
-            "Decision": decision.get("decision", "N/A"),
-            "Confidence": f"{decision.get('confidence', 0):.0%}",
-            "Reason": decision.get("reason", "N/A"),
-        })
-    
-    return pd.DataFrame(data)
-
-
-def render_metric_card(label, value, delta, icon):
-    """Render a custom metric card."""
-    st.metric(label, value, delta=delta)
-
-
-def main():
-    # Header Section
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.markdown("# ⚡ HELIX TRADING COMMAND CENTER")
-        st.markdown(
-            "<small style='color: #A0AABF;'>Real-time AI-powered market decision engine</small>",
-            unsafe_allow_html=True
-        )
-    
-    st.markdown("---")
-    
-    # System Health Status
+def render_system_health():
+    """Render system health status section."""
     st.markdown("### 🔧 SYSTEM STATUS")
     health_col1, health_col2, health_col3 = st.columns(3)
     
@@ -237,132 +155,172 @@ def main():
             f"</div>",
             unsafe_allow_html=True
         )
+
+
+def render_risk_engine_status():
+    """Render risk engine status section with kill switch, approval status, and trade count."""
+    st.markdown("### ⚖️  RISK ENGINE STATUS")
     
-    # Load decisions
-    decisions = load_decisions()
+    # Get all metrics
+    metrics = get_decision_status_metrics()
+    latest_decision = metrics["latest_decision"]
+    latest_review = metrics["latest_review"]
+    is_approved = metrics["approved"]
+    rejection_reason = metrics["rejection_reason"]
+    kill_switch_on = metrics["kill_switch"]
+    trades_today = metrics["trades_today"]
+    max_trades = metrics["max_trades"]
     
-    if not decisions:
-        st.markdown("---")
+    # Kill Switch Indicator
+    kill_switch_col, approval_col, trades_col = st.columns(3)
+    
+    with kill_switch_col:
+        kill_status = "🔴 ON" if kill_switch_on else "🟢 OFF"
+        kill_color = "#FF006E" if kill_switch_on else "#00FF41"
+        kill_class = "kill-switch-on" if kill_switch_on else "kill-switch-off"
         st.markdown(
-            "<div style='text-align: center; padding: 40px; color: #A0AABF;'>"
-            "<h3>⏳ AWAITING FIRST DECISION</h3>"
-            "<p>The autonomous agent will record its first trading decision here.</p>"
-            "</div>",
+            f"<div class='command-card {kill_class}'>"
+            f"<div style='font-size: 0.85em; color: #A0AABF; margin-bottom: 8px;'>KILL SWITCH</div>"
+            f"<div style='font-size: 2em; color: {kill_color}; margin: 12px 0; font-weight: bold;'>{kill_status}</div>"
+            f"<div style='font-size: 0.75em; color: #A0AABF;'>"
+            f"{'⚠️  TRADING DISABLED' if kill_switch_on else '✓ TRADING ENABLED'}"
+            f"</div>"
+            f"</div>",
             unsafe_allow_html=True
         )
-        return
     
-    st.markdown("---")
+    # Latest Decision Approval Status
+    with approval_col:
+        if latest_review:
+            status_badge = "✅ APPROVED" if is_approved else "❌ REJECTED"
+            status_color = "#00FF41" if is_approved else "#FF006E"
+            decision = latest_review.get("risk_review", {}).get("decision", "N/A")
+            
+            st.markdown(
+                f"<div class='command-card'>"
+                f"<div style='font-size: 0.85em; color: #A0AABF; margin-bottom: 8px;'>LATEST DECISION</div>"
+                f"<div style='font-size: 1.5em; color: #00D9FF; margin: 8px 0;'>{decision}</div>"
+                f"<div style='font-size: 1.2em; color: {status_color}; font-weight: bold;'>{status_badge}</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                f"<div class='command-card'>"
+                f"<div style='font-size: 0.85em; color: #A0AABF; margin-bottom: 8px;'>LATEST DECISION</div>"
+                f"<div style='font-size: 0.95em; color: #A0AABF;'>No decisions yet</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
     
-    # Latest Decision Panel
-    latest = get_latest_decision(decisions)
-    if latest:
-        decision_data = latest.get("decision", {})
+    # Trade Count
+    with trades_col:
+        st.markdown(
+            f"<div class='command-card'>"
+            f"<div style='font-size: 0.85em; color: #A0AABF; margin-bottom: 8px;'>TRADES TODAY</div>"
+            f"<div style='font-size: 2em; color: #00D9FF; margin: 8px 0;'>{trades_today} / {max_trades}</div>"
+            f"<div style='font-size: 0.75em; color: #A0AABF;'>Approved trades</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+    
+    # Rejection Reason (if applicable)
+    if not is_approved and rejection_reason:
+        st.markdown("### ❌ Rejection Reason")
+        st.markdown(
+            f"<div class='command-card'>"
+            f"<div style='font-size: 1.1em; color: #FF006E;'>{rejection_reason}</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+    
+    # Latest Decision Details
+    if latest_decision:
+        decision_data = latest_decision.get("decision", {})
         symbol = decision_data.get("symbol", "N/A")
         decision = decision_data.get("decision", "N/A")
         confidence = decision_data.get("confidence", 0)
         reason = decision_data.get("reason", "N/A")
         risk_notes = decision_data.get("risk_notes", "N/A")
-        timestamp = latest.get("timestamp", "N/A")
         
-        # Determine decision color and emoji
-        decision_colors = {
-            "BUY": ("🟢 BUY", "#00FF41"),
-            "SELL": ("🔴 SELL", "#FF006E"),
-            "HOLD": ("🟡 HOLD", "#FFB700"),
-            "NO_TRADE": ("⚪ NO_TRADE", "#A0AABF"),
-        }
-        decision_display, decision_color = decision_colors.get(decision, ("❓ UNKNOWN", "#A0AABF"))
+        st.markdown("### 🎯 Decision Details")
         
-        st.markdown("### 🎯 LATEST AI DECISION")
+        detail_col1, detail_col2 = st.columns(2)
         
-        # Decision metrics row
-        metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
-        
-        with metric_col1:
+        with detail_col1:
             st.markdown(
-                f"<div class='command-card' style='text-align: center;'>"
-                f"<div style='font-size: 0.85em; color: #A0AABF;'>SYMBOL</div>"
-                f"<div style='font-size: 2em; color: #00D9FF; margin: 8px 0;'>{symbol}</div>"
+                f"<div class='command-card'>"
+                f"<div style='margin: 12px 0;'><strong>Symbol:</strong> <span style='color: #00D9FF;'>{symbol}</span></div>"
+                f"<div style='margin: 12px 0;'><strong>Decision:</strong> <span style='color: #FFB700;'>{decision}</span></div>"
+                f"<div style='margin: 12px 0;'><strong>Confidence:</strong> <span style='color: #00FF41;'>{confidence:.0%}</span></div>"
                 f"</div>",
                 unsafe_allow_html=True
             )
         
-        with metric_col2:
+        with detail_col2:
             st.markdown(
-                f"<div class='command-card' style='text-align: center;'>"
-                f"<div style='font-size: 0.85em; color: #A0AABF;'>DECISION</div>"
-                f"<div style='font-size: 1.8em; color: {decision_color}; margin: 8px 0; font-weight: bold;'>{decision_display}</div>"
+                f"<div class='command-card'>"
+                f"<div style='margin: 12px 0;'><strong>📋 Reasoning:</strong></div>"
+                f"<div style='color: #A0AABF; font-size: 0.95em;'>{reason}</div>"
                 f"</div>",
                 unsafe_allow_html=True
             )
-        
-        with metric_col3:
-            confidence_pct = f"{confidence:.0%}"
-            confidence_color = "#00FF41" if confidence >= 0.6 else "#FFB700" if confidence >= 0.4 else "#FF006E"
-            st.markdown(
-                f"<div class='command-card' style='text-align: center;'>"
-                f"<div style='font-size: 0.85em; color: #A0AABF;'>CONFIDENCE</div>"
-                f"<div style='font-size: 2em; color: {confidence_color}; margin: 8px 0;'>{confidence_pct}</div>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        
-        with metric_col4:
-            time_display = timestamp.split("T")[0] if "T" in timestamp else timestamp
-            st.markdown(
-                f"<div class='command-card' style='text-align: center;'>"
-                f"<div style='font-size: 0.85em; color: #A0AABF;'>TIMESTAMP</div>"
-                f"<div style='font-size: 1.3em; color: #00D9FF; margin: 8px 0; word-break: break-all;'>{time_display}</div>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        
-        # Decision details
-        st.markdown("**📋 Analysis Details:**")
-        st.markdown(
-            f"<div class='command-card'>"
-            f"<div style='margin: 12px 0;'><strong>Reasoning:</strong></div>"
-            f"<div style='color: #A0AABF; font-size: 0.95em;'>{reason}</div>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-        
-        st.markdown(
-            f"<div class='command-card'>"
-            f"<div style='margin: 12px 0;'><strong>⚠️ Risk Assessment:</strong></div>"
-            f"<div style='color: #FFB700; font-size: 0.95em;'>{risk_notes}</div>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
+
+
+def render_risk_review_table():
+    """Render the recent risk reviews table."""
+    st.markdown("### 📊 RECENT RISK REVIEWS")
     
-    st.markdown("---")
+    df = format_risk_reviews_for_table(limit=20)
     
-    # Decision History Table
-    st.markdown("### 📊 DECISION HISTORY")
-    df = format_decision_data(decisions)
-    
-    if not df.empty:
-        df_display = df.iloc[::-1].reset_index(drop=True)
+    if df.empty:
+        st.info("📋 No risk reviews yet. Decisions will appear here once they're evaluated.")
+    else:
         st.dataframe(
-            df_display,
+            df,
             use_container_width=True,
             hide_index=True,
             column_config={
-                "Timestamp": st.column_config.TextColumn(width="medium"),
+                "Time": st.column_config.TextColumn(width="medium"),
                 "Symbol": st.column_config.TextColumn(width="small"),
                 "Decision": st.column_config.TextColumn(width="small"),
-                "Confidence": st.column_config.TextColumn(width="small"),
+                "Status": st.column_config.TextColumn(width="small"),
                 "Reason": st.column_config.TextColumn(width="large"),
             }
         )
         
-        st.markdown(
-            f"<div style='text-align: center; color: #A0AABF; font-size: 0.9em; margin-top: 16px;'>"
-            f"Displaying {len(df_display)} recent decisions • Total recorded: {len(decisions)}"
-            f"</div>",
-            unsafe_allow_html=True
-        )
+        total_reviews = len(load_risk_reviews(limit=10000))
+        st.caption(f"Showing latest 20 reviews • Total recorded: {total_reviews}")
+
+
+def main():
+    # Header Section
+    st.markdown("# ⚡ HELIX TRADING COMMAND CENTER")
+    st.markdown(
+        "<small style='color: #A0AABF;'>Real-time AI-powered market decision engine • Phase 4: Risk Engine Active</small>",
+        unsafe_allow_html=True
+    )
+    
+    st.markdown("---")
+    
+    # System Health
+    render_system_health()
+    st.markdown("---")
+    
+    # Risk Engine Status
+    render_risk_engine_status()
+    st.markdown("---")
+    
+    # Risk Review Table
+    render_risk_review_table()
+    
+    st.markdown("---")
+    st.markdown(
+        "<div style='text-align: center; color: #A0AABF; font-size: 0.85em; margin-top: 20px;'>"
+        "🤖 HELIX v1.0 • Autonomous Trading System • Phase 4: Risk Engine Approval/Rejection"
+        "</div>",
+        unsafe_allow_html=True
+    )
 
 
 if __name__ == "__main__":

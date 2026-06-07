@@ -1,12 +1,15 @@
 import json
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from app.risk_config import (
     WATCHLIST, 
     KILL_SWITCH, 
     MAX_TRADES_PER_DAY,
     CONFIDENCE_THRESHOLD_BUY,
-    CONFIDENCE_THRESHOLD_SELL
+    CONFIDENCE_THRESHOLD_SELL,
+    TRADING_HOURS_START,
+    TRADING_HOURS_END
 )
 
 
@@ -56,7 +59,7 @@ def validate_risk(decision_data):
             "decision": decision
         }
     
-    # Rule 2: HOLD and NO_TRADE are never executable
+    # Rule 2: HOLD/NO_TRADE 
     if decision in ["HOLD", "NO_TRADE"]:
         return {
             "approved": False,
@@ -65,7 +68,16 @@ def validate_risk(decision_data):
             "decision": decision
         }
     
-    # Rule 3: Symbol must be on watchlist
+    # Rule 3: Market must be open
+    if not _is_market_open():
+        return {
+            "approved": False,
+            "reason": "🕒 MARKET_CLOSED",
+            "symbol": symbol,
+            "decision": decision
+    }
+    
+    # Rule 4: watchlist
     if symbol not in WATCHLIST:
         return {
             "approved": False,
@@ -74,7 +86,7 @@ def validate_risk(decision_data):
             "decision": decision
         }
     
-    # Rule 4: Confidence threshold for BUY
+    # Rule 5: Buy Confidence 
     if decision == "BUY":
         threshold = CONFIDENCE_THRESHOLD_BUY
         if confidence < threshold:
@@ -85,7 +97,7 @@ def validate_risk(decision_data):
                 "decision": decision
             }
     
-    # Rule 5: Confidence threshold for SELL
+    # Rule 6: Sell Confidence
     elif decision == "SELL":
         threshold = CONFIDENCE_THRESHOLD_SELL
         if confidence < threshold:
@@ -96,7 +108,7 @@ def validate_risk(decision_data):
                 "decision": decision
             }
     
-    # Rule 6: Max trades per day limit
+    # Rule 7: Max trades 
     trades_today = _count_trades_today()
     if trades_today >= MAX_TRADES_PER_DAY:
         return {
@@ -125,3 +137,19 @@ def _count_trades_today():
     # TODO: In Phase 5, count actual executed trades
     # For now, always return 0
     return 0
+
+def _is_market_open():
+    """
+    Check if current time is within configured trading hours.
+    
+    Uses US Eastern Time because market hours are defined in EST/EDT.
+    """
+    
+    eastern = ZoneInfo("America/New_York")
+    now = datetime.now(eastern)
+
+    current_time = now.hour + (now.minute / 60)
+
+    return (
+        TRADING_HOURS_START <= current_time <= TRADING_HOURS_END
+    )
