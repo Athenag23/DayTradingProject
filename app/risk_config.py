@@ -20,3 +20,6 @@ TRADING_HOURS_END = 16.0    # 4:00 PM EST
 
 # Stale data protection
 STALE_DATA_THRESHOLD_SECONDS = 300  # 5 minutes
+
+# Cooldown Timer (Phase 4.1) - NEW
+COOLDOWN_SECONDS = 600  # 10 minutes between same-symbol trades

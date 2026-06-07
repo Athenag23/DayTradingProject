@@ -1,7 +1,9 @@
 import json
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
+from typing import Dict, Any, Optional, Tuple
 from app.risk_config import (
     WATCHLIST, 
     KILL_SWITCH, 
@@ -10,7 +12,8 @@ from app.risk_config import (
     CONFIDENCE_THRESHOLD_SELL,
     TRADING_HOURS_START,
     TRADING_HOURS_END,
-    STALE_DATA_THRESHOLD_SECONDS
+    STALE_DATA_THRESHOLD_SECONDS,
+    COOLDOWN_SECONDS
 )
 
 
@@ -18,7 +21,8 @@ def validate_risk(decision_data):
     """
     Validate a Llama decision against all risk rules.
     
-    Phase 4: Approval/rejection only. No execution.
+    Phase 4.1: Approval/rejection only. No execution.
+    Includes Cooldown Timer and Duplicate Trade Prevention.
     
     Args:
         decision_data: Dict from Llama with keys:
@@ -27,6 +31,7 @@ def validate_risk(decision_data):
             - confidence: float (0.0-1.0)
             - reason: str
             - risk_notes: str
+            - market_timestamp: str (ISO format)
     
     Returns:
         Dict with:
@@ -68,6 +73,7 @@ def validate_risk(decision_data):
             "symbol": symbol,
             "decision": decision
         }
+    
     # Rule 3: Market data must not be stale
     is_stale, stale_reason = _is_data_stale(decision_data)
     if is_stale:
@@ -76,7 +82,7 @@ def validate_risk(decision_data):
             "reason": f"🧊 STALE_DATA - {stale_reason}",
             "symbol": symbol,
             "decision": decision
-    }
+        }
     
     # Rule 4: Market must be open
     if not _is_market_open():
@@ -85,7 +91,7 @@ def validate_risk(decision_data):
             "reason": "🕒 MARKET_CLOSED",
             "symbol": symbol,
             "decision": decision
-    }
+        }
 
     # Rule 5: watchlist
     if symbol not in WATCHLIST:
@@ -128,6 +134,24 @@ def validate_risk(decision_data):
             "decision": decision
         }
     
+    # Rule 9: Cooldown Timer (Phase 4.1) - NEW
+    if _is_cooldown_active(symbol):
+        return {
+            "approved": False,
+            "reason": f"⏳ COOLDOWN_ACTIVE - {symbol} still in cooldown",
+            "symbol": symbol,
+            "decision": decision
+        }
+    
+    # Rule 10: Duplicate Trade Prevention (Phase 4.1) - NEW
+    if _is_duplicate_trade(symbol, decision):
+        return {
+            "approved": False,
+            "reason": f"🔁 DUPLICATE_TRADE - duplicate {decision} for {symbol}",
+            "symbol": symbol,
+            "decision": decision
+        }
+    
     # All risk checks passed
     return {
         "approved": True,
@@ -141,12 +165,37 @@ def _count_trades_today():
     """
     Count trades executed today.
     
-    Phase 4: Returns 0 (no trades executed yet).
-    Phase 5: Will query actual executed trades from logs.
+    Phase 4: Returns count from logs/decisions.jsonl
+    Phase 5: Will query actual executed trades.
     """
-    # TODO: In Phase 5, count actual executed trades
-    # For now, always return 0
-    return 0
+    today = datetime.now().date()
+    count = 0
+    decisions_log = "logs/decisions.jsonl"
+    
+    if not os.path.exists(decisions_log):
+        return count
+    
+    try:
+        with open(decisions_log, "r") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        row = json.loads(line)
+                        if row.get("approved"):
+                            ts_str = row.get("timestamp", "")
+                            try:
+                                ts = datetime.fromisoformat(ts_str)
+                                if ts.date() == today:
+                                    count += 1
+                            except (ValueError, TypeError):
+                                pass
+                    except json.JSONDecodeError:
+                        pass
+    except IOError:
+        pass
+    
+    return count
+
 
 def _is_market_open():
     """
@@ -163,6 +212,7 @@ def _is_market_open():
     return (
         TRADING_HOURS_START <= current_time <= TRADING_HOURS_END
     )
+
 
 def _is_data_stale(decision_data):
     """
@@ -195,3 +245,99 @@ def _is_data_stale(decision_data):
 
     except Exception as e:
         return True, f"Invalid market_timestamp: {e}"
+
+
+# NEW PHASE 4.1 HELPER FUNCTIONS BELOW
+
+def _get_last_approved_decision(symbol: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve the last approved decision for a symbol.
+    Searches logs/risk_reviews.jsonl first, then logs/decisions.jsonl.
+    Returns most recent entry or None.
+    """
+    risk_reviews_log = "logs/risk_reviews.jsonl"
+    decisions_log = "logs/decisions.jsonl"
+    
+    # Try risk_reviews log first (preferred)
+    if os.path.exists(risk_reviews_log):
+        try:
+            entries = []
+            with open(risk_reviews_log, "r") as f:
+                for line in f:
+                    if line.strip():
+                        try:
+                            row = json.loads(line)
+                            if row.get("symbol") == symbol and row.get("approved"):
+                                entries.append(row)
+                        except json.JSONDecodeError:
+                            pass
+            
+            if entries:
+                entries.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+                return entries[0]
+        except IOError:
+            pass
+    
+    # Fallback to decisions log
+    if os.path.exists(decisions_log):
+        try:
+            entries = []
+            with open(decisions_log, "r") as f:
+                for line in f:
+                    if line.strip():
+                        try:
+                            row = json.loads(line)
+                            if row.get("symbol") == symbol and row.get("approved"):
+                                entries.append(row)
+                        except json.JSONDecodeError:
+                            pass
+            
+            if entries:
+                entries.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+                return entries[0]
+        except IOError:
+            pass
+    
+    return None
+
+
+def _is_cooldown_active(symbol: str) -> bool:
+    """
+    Check if symbol is still in cooldown window.
+    Returns True if last approved trade within COOLDOWN_SECONDS.
+    Phase 4.1 Feature.
+    """
+    last_decision = _get_last_approved_decision(symbol)
+    if not last_decision:
+        return False
+    
+    try:
+        last_timestamp_str = last_decision.get("timestamp", "")
+        last_timestamp = datetime.fromisoformat(last_timestamp_str)
+        cooldown_end = last_timestamp + timedelta(seconds=COOLDOWN_SECONDS)
+        
+        if datetime.now(last_timestamp.tzinfo or timezone.utc) < cooldown_end:
+            return True
+    except (ValueError, TypeError):
+        pass
+    
+    return False
+
+
+def _is_duplicate_trade(symbol: str, decision: str) -> bool:
+    """
+    Prevent duplicate consecutive executable decisions.
+    Only checks BUY and SELL.
+    Returns True if last approved decision for symbol has same action.
+    Phase 4.1 Feature.
+    """
+    # Only apply to BUY and SELL
+    if decision not in ["BUY", "SELL"]:
+        return False
+    
+    last_decision = _get_last_approved_decision(symbol)
+    if not last_decision:
+        return False
+    
+    last_action = last_decision.get("decision", "")
+    return last_action == decision
