@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from app.risk_config import (
@@ -9,7 +9,8 @@ from app.risk_config import (
     CONFIDENCE_THRESHOLD_BUY,
     CONFIDENCE_THRESHOLD_SELL,
     TRADING_HOURS_START,
-    TRADING_HOURS_END
+    TRADING_HOURS_END,
+    STALE_DATA_THRESHOLD_SECONDS
 )
 
 
@@ -67,8 +68,17 @@ def validate_risk(decision_data):
             "symbol": symbol,
             "decision": decision
         }
+    # Rule 3: Market data must not be stale
+    is_stale, stale_reason = _is_data_stale(decision_data)
+    if is_stale:
+        return {
+            "approved": False,
+            "reason": f"🧊 STALE_DATA - {stale_reason}",
+            "symbol": symbol,
+            "decision": decision
+    }
     
-    # Rule 3: Market must be open
+    # Rule 4: Market must be open
     if not _is_market_open():
         return {
             "approved": False,
@@ -76,8 +86,8 @@ def validate_risk(decision_data):
             "symbol": symbol,
             "decision": decision
     }
-    
-    # Rule 4: watchlist
+
+    # Rule 5: watchlist
     if symbol not in WATCHLIST:
         return {
             "approved": False,
@@ -86,7 +96,7 @@ def validate_risk(decision_data):
             "decision": decision
         }
     
-    # Rule 5: Buy Confidence 
+    # Rule 6: Buy Confidence 
     if decision == "BUY":
         threshold = CONFIDENCE_THRESHOLD_BUY
         if confidence < threshold:
@@ -97,7 +107,7 @@ def validate_risk(decision_data):
                 "decision": decision
             }
     
-    # Rule 6: Sell Confidence
+    # Rule 7: Sell Confidence
     elif decision == "SELL":
         threshold = CONFIDENCE_THRESHOLD_SELL
         if confidence < threshold:
@@ -108,7 +118,7 @@ def validate_risk(decision_data):
                 "decision": decision
             }
     
-    # Rule 7: Max trades 
+    # Rule 8: Max trades 
     trades_today = _count_trades_today()
     if trades_today >= MAX_TRADES_PER_DAY:
         return {
@@ -153,3 +163,35 @@ def _is_market_open():
     return (
         TRADING_HOURS_START <= current_time <= TRADING_HOURS_END
     )
+
+def _is_data_stale(decision_data):
+    """
+    Check whether market data used for the decision is stale.
+
+    Expected timestamp field:
+        market_timestamp
+
+    Timestamp should be ISO format, example:
+        2026-06-06T19:30:00Z
+    """
+
+    market_timestamp = decision_data.get("market_timestamp")
+
+    if not market_timestamp:
+        return True, "Missing market_timestamp"
+
+    try:
+        market_time = datetime.fromisoformat(
+            market_timestamp.replace("Z", "+00:00")
+        )
+
+        now = datetime.now(market_time.tzinfo)
+        age_seconds = (now - market_time).total_seconds()
+
+        if age_seconds > STALE_DATA_THRESHOLD_SECONDS:
+            return True, f"Market data stale: {age_seconds:.0f}s old"
+
+        return False, f"Market data fresh: {age_seconds:.0f}s old"
+
+    except Exception as e:
+        return True, f"Invalid market_timestamp: {e}"

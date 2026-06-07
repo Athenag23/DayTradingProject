@@ -17,3 +17,6 @@ CONFIDENCE_THRESHOLD_SELL = 0.65  # Require 65% confidence for SELL
 # Trading window (24-hour format, decimal hours)
 TRADING_HOURS_START = 9.5   # 9:30 AM EST
 TRADING_HOURS_END = 16.0    # 4:00 PM EST
+
+# Stale data protection
+STALE_DATA_THRESHOLD_SECONDS = 300  # 5 minutes
