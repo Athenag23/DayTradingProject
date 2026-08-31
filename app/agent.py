@@ -3,7 +3,7 @@ from app.llama_client import query_llama
 from app.prompt_builder import build_prompt
 
 
-ALLOWED_DECISIONS = {"BUY", "SELL", "HOLD", "NO_TRADE"}
+ALLOWED_DECISIONS = {"BUY", "SELL", "NO_TRADE"}
 
 
 def validate_decision(data: dict) -> bool:
@@ -18,9 +18,13 @@ def validate_decision(data: dict) -> bool:
         print(f"Validation failed: missing fields {missing}")
         return False
 
-    if data["decision"] not in ALLOWED_DECISIONS:
+    decision = str(data["decision"]).upper().strip()
+
+    if decision not in ALLOWED_DECISIONS:
         print(f"Validation failed: invalid decision {data['decision']}")
         return False
+
+    data["decision"] = decision
 
     if not isinstance(data["confidence"], (int, float)):
         print("Validation failed: confidence must be a number")

@@ -1,32 +1,15 @@
+import json
 import sys
 from pathlib import Path
-from datetime import datetime, timezone
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.health_check import run_startup_checks
 from app.agent import run_decision_engine
+from app.data_fetcher import get_market_snapshot
+from app.health_check import run_startup_checks
 from app.logger import log_decision, log_risk_review
 from app.risk_engine import validate_risk
-
-
-def get_sample_market_data(symbol: str):
-    """
-    Use sample data for testing when market data is unavailable.
-    Phase 5 will always use real Alpaca data.
-    """
-    return {
-        "symbol": symbol,
-        "price": 150.25,
-        "volume": 2500000,
-        "rsi": 72.5,
-        "ema_9": 149.80,
-        "ema_20": 148.50,
-        "trend": "BULLISH",
-        "news": "none",
-        "market_timestamp": datetime.now(timezone.utc).isoformat()
-    }
 
 
 def main():
@@ -35,22 +18,9 @@ def main():
 
     print("\n🚀 Phase 4: Risk Engine Active\n")
 
-    # Use sample data for testing
-    data = get_sample_market_data("AAPL")
-
-    market_data = f"""
-    {{
-      "symbol": "{data['symbol']}",
-      "price": {data['price']},
-      "volume": {data['volume']},
-      "rsi": {data['rsi']},
-      "ema_9": {data['ema_9']},
-      "ema_20": {data['ema_20']},
-      "trend": "{data['trend']}",
-      "news": "{data['news']}",
-      "market_timestamp": "{data['market_timestamp']}"
-    }}
-    """
+    # Phase 3.5: Fetch real market data and compute real indicators
+    data = get_market_snapshot("AAPL")
+    market_data = json.dumps(data, separators=(",", ":"))
 
     print("Computed market snapshot:")
     print(data)
@@ -59,7 +29,7 @@ def main():
     decision = run_decision_engine(market_data)
 
     if decision is not None:
-        # Attach market timestamp to decision before risk validation
+        # Preserve timestamp used for this specific market decision
         decision["market_timestamp"] = data["market_timestamp"]
 
     print("\n🤖 Llama decision:")
